@@ -1,1 +1,192 @@
-test
+Билет №29:
+1.  Java Memory Model - основные аспекты. Garbage Collector. Garbage Collector G1. СMS.
+2. 	Logback и конфигурация логирования - logback.xml. Логирование в Java. Jackson – работа с JSON. Конфигурирование Java приложений с помощью typesafe config.
+3.  Реализовать endpoint в TaskController, которому при запросе передаётся boostrapServers и название топика. В endpoint создаётся consumer Kafka, который читает топик, начиная с самых старых сообщений. Далее в Redis находим строку, по ключу первого сообщения из Kafka ("test") и возвращаем в endpoint значение из Redis в верхнем регистре и с обратным порядком букв
+
+8 лаб -> нет задачи
+
+
+1. Java Memory Model - основные аспекты. Garbage Collector. Garbage Collector G1. СMS.
+
+JMM - часть специфики Java, определяющая, как потоки взаимодействуют с памятью, гарантируя предсказуемость в многопоточной среде.
+То есть позволяет одному потоку видеть изменения, которые внес другой поток или выполнять операции атомарно.
+
+основные инструменты, с которыми мы сталкивались:
+
+1. synchronized - позволяет входить в блок кода только некоторому потоку, хороший пример - аналог Lazy из шарпов
+
+private byte[][] getRconInner() {
+        byte[][] result = rcon;
+        if (result == null) {
+            synchronized (this) {
+                result = rcon;
+                if (result == null) {
+                    rcon = result = generateRcon();
+                }
+            }
+        }
+        return result;
+    }
+
+2. Атомарные переменные - в этом семестре мне понравилось AtomicReference
+
+private final AtomicReference<Rule[]> currentRules = new AtomicReference<>();
+
+currentRules.set(getRulesFromDb());
+
+currentRules.get()
+
+
+3. volatile - когда изменение переменной видно всем потокам
+4. final - особенно его новая жизнь в спринге
+
+
+Garbage Collector - механизм автоматического управления памятью, который как бы подчищает не используемые нами объекты.
+
+
+Garbage Collector G1 - он является основным сборщиком мусора начиная с Java 9. Интерес в том, что он как бы разделяет объекты по регионам
+в первом регионе по началу находятся все объекты и если ко времени прохода они еще используются, то они переходят в следующий регион, который сборщик проверяет несколько реже
+
+если они пережили и этот регион (все еще используются) то переходят в следующий регион очистки, и таким образом, объекты, которые нужны на протяжении всего времени работы рпограммы
+останутся, а более мелкие - очистятся.
+
+Конечно, программу нужно строить так, чтобы не создавалось множество экземляров мелких классов, которые ну попросту захломляют память, поэтому можно использовать разные паттерны проектирования
+- синглтон например.
+
+
+СMS - позволяет уменьшить паузы, которые возникают из-за очистки, но требует больше ресурсов
+Работает так:
+ - зафиксировал корневые ссылки, потом ищет достижимые объекты, фиксирует изменения, если они состоятся и удяляет объекты.
+
+
+ 2. 	Logback и конфигурация логирования - logback.xml. Логирование в Java. Jackson – работа с JSON. Конфигурирование Java приложений с помощью typesafe config.
+
+Logback - приемник Log4j - основа для логирования в современных приложениях Java, полностью совместим c Slf4j  - наверно самым удобным логгером, что я щупал - лишь одна аннотация и все
+
+уровни логирования можно настраивать как душе угодне - даже на отдельные сервисы (ниже пример для @grpcService)
+
+прмер в спринге
+logging:
+  level:
+    root : WARN
+    io.grpc: INFO
+    org.springframework.security: WARN
+
+
+пример в logback.xml
+<configuration>
+ 	<appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+     	<encoder>
+         	<pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+     	</encoder>
+ 	</appender>
+ 	<root level="debug">
+     	<appender-ref ref="STDOUT" />
+     </root>
+ </configuration>
+
+
+пример логирования в Java - очень удобно для отслеживания сообщений в топиках кафки, особенно, когда все собирал
+
+log.info("Polling messages...");
+                    ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(50));
+                    log.info("Received {} messages", records.count());
+
+                    for (ConsumerRecord<String, String> oneRecord : records) {
+                        Rule[] currentRules = dbReader.readRulesFromDB();
+                        log.info("!!!{}", Arrays.toString(currentRules));
+                        log.info("*** new message on KafkaReader: {}", oneRecord.value());
+                        Message afterFilteringMessage = filter.processing(new Message(oneRecord.value(), false), currentRules);
+
+                        if (afterFilteringMessage != null && afterFilteringMessage.isFilterState()) {
+                            producer.processing(afterFilteringMessage);
+                            log.info("send to out topic: {}", afterFilteringMessage);
+                        }
+                    }
+
+
+
+Typesafe Config (теперь называется Lightbend Config) — это популярная библиотека для работы с конфигурационными файлами в Java-приложениях.
+Она предоставляет удобный и гибкий способ управления настройками приложения через внешние конфигурационные файлы,
+такие как application.conf или reference.conf.
+Библиотека была создана компанией Typesafe (ныне Lightbend),
+ которая также разрабатывает фреймворк Akka и другие инструменты для Scala и Java.
+
+Форматы typesafe config
+•HOCON (Human-Optimized Config Object Notation) — это основной формат, который используется в Typesafe Config. Это расширение JSON, которое делает конфигурации более удобными для чтения и редактирования человеком. HOCON сохраняет совместимость с JSON, но добавляет множество дополнительных возможностей.
+
+вот пример мы такое и использовали
+
+db {
+  jdbcUrl = ${?DB_JDBC_URL}
+  user = ${?DB_USER}
+  password = ${?DB_PASSWORD}
+  driver = ${?DB_DRIVER}
+}
+
+kafka {
+  consumer {
+    bootstrap.servers = ${?KAFKA_CONSUMER_BOOTSTRAP_SERVERS}
+    group.id = ${?KAFKA_CONSUMER_GROUP_ID}
+    auto.offset.reset = ${?KAFKA_CONSUMER_AUTO_OFFSET_RESET}
+    topics = [${?KAFKA_CONSUMER_TOPICS}]
+  }
+  producer {
+    bootstrap.servers = ${?KAFKA_PRODUCER_BOOTSTRAP_SERVERS}
+    topic = ${?KAFKA_PRODUCER_TOPIC}
+  }
+}
+
+application {
+  updateIntervalSec = ${?APPLICATION_UPDATE_INTERVAL_SEC}
+  server_port = ${?SERVER_PORT}
+}
+
+
+
+•JSON - typesafe config полностью поддерживает формат JSON. Однако, по сравнению с HOCON, JSON менее гибкий и удобный для человека, так как не поддерживает комментарии, переменные и другие продвинутые возможности.
+•Properties - формат .properties классический для конфигураций в Java. Он простой, но менее удобный для сложных структур данных. Typesafe Config поддерживает этот формат, но его использование рекомендуется только для простых случаев.
+
+
+
+
+Jackson – работа с JSON.
+
+без этой штуки не выполнить 3 лабу также приятно)
+
+- это высокопроизводительный Java-фреймворк для сериализации (объект → JSON) и десериализации (JSON → объект). Это стандартный инструмент для работы с JSON в Spring Boot и многих других Java-приложениях.
+ПРимечательно, что когда мы передаем json'ы в контроллер и обратно, jackson отрабатывает за нас неявно
+
+Основное, чем пользовался - ObjectMapper - который позволяет сериализовывать/десериализоввывать
+
+Также пользовался JsonNode - для предсавления json как дерева
+
+
+пример с заменой положения id в монго документе
+
+  ObjectNode documentNode = objectMapper.valueToTree(doc);
+
+                    documentNode.remove("_id");
+
+                    ObjectNode oidNode = objectMapper.createObjectNode();
+                    oidNode.put("$oid", doc.get("_id").toString());
+
+                    documentNode.set("_id", oidNode);
+
+                    ((ObjectNode) messageInJson).set(fieldInMessage, documentNode);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
